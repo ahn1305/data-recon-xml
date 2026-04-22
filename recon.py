@@ -5,11 +5,11 @@ import re
 # -------------------------------
 # CONFIG
 # -------------------------------
-XML_PATH = "ds_job.xml"
-EXCEL_PATH = "lineage.xlsx"
+XML_PATH = "../jCidDW036_3215_CID_ACCT_PROD_Extract.xml"
+EXCEL_PATH = "../dataviz1.xlsx"
 OUTPUT_PATH = "final_recon_output.xlsx"
 
-EDGES_SHEET = "edges"
+EDGES_SHEET = "Edges"
 
 # -------------------------------
 # STEP 1: PARSE XML
@@ -65,7 +65,7 @@ df_edges.columns = [c.strip().lower() for c in df_edges.columns]
 
 # Clean relevant fields
 df_edges["source stage.col"] = df_edges["source stage.col"].astype(str).str.strip()
-df_edges["target col"] = df_edges["target col"].astype(str).str.strip()
+df_edges["target stage.col"] = df_edges["target stage.col"].astype(str).str.strip()
 
 # -------------------------------
 # STEP 3: NORMALIZE KEYS
@@ -76,7 +76,7 @@ def extract_col(x):
         return x.split(".")[-1]
     return x
 
-df_edges["column_name"] = df_edges["target col"].apply(extract_col)
+df_edges["column_name"] = df_edges["target stage.col"].apply(extract_col)
 df_edges["source_column_clean"] = df_edges["source stage.col"]
 
 # -------------------------------
@@ -98,7 +98,7 @@ for _, row in df_edges.iterrows():
         target_table = match.iloc[0]["target_table"]
 
         comment = "MATCHED"
-        if row.get("confidence", "").lower() != "high":
+        if row.get("confidence", "") != "high":
             comment += " | Low confidence in Excel"
 
     else:
