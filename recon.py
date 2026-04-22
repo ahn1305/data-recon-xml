@@ -1,6 +1,5 @@
 import xml.etree.ElementTree as ET
 import pandas as pd
-import re
 
 # -------------------------------
 # CONFIG
@@ -12,125 +11,93 @@ OUTPUT_PATH = "final_recon_output.xlsx"
 EDGES_SHEET = "Edges"
 
 # -------------------------------
-# STEP 1: PARSE XML
+# STEP 1: PARSE XML (SOURCE COLUMNS)
 # -------------------------------
 tree = ET.parse(XML_PATH)
 root = tree.getroot()
 
-xml_rows = []
+xml_source_cols = set()
 
 for col in root.findall(".//Collection[@Name='Columns']/SubRecord"):
-    col_name = None
     source_col = None
-    derivation = None
-    table_def = None
 
     for prop in col.findall("Property"):
-        name = prop.attrib.get("Name")
-
-        if name == "Name":
-            col_name = prop.text
-        elif name == "SourceColumn":
+        if prop.attrib.get("Name") == "SourceColumn":
             source_col = prop.text
-        elif name == "Derivation":
-            derivation = prop.text
-        elif name == "TableDef":
-            table_def = prop.text
 
-    if col_name:
-        xml_rows.append({
-            "column_name": col_name.strip(),
-            "source_column": source_col,
-            "derivation": derivation,
-            "target_table": table_def
-        })
+    if source_col:
+        xml_source_cols.add(source_col.strip())
 
-df_xml = pd.DataFrame(xml_rows)
+df_xml = pd.DataFrame({"source_stage_col": list(xml_source_cols)})
 
-# Clean source_column (extract stage.col)
-def clean_source(x):
-    if pd.isna(x):
-        return None
-    return x.strip()
-
-df_xml["source_column"] = df_xml["source_column"].apply(clean_source)
+print(f"✅ Total XML source columns: {len(df_xml)}")
 
 # -------------------------------
-# STEP 2: LOAD EXCEL (EDGES)
+# STEP 2: LOAD EXCEL
 # -------------------------------
 df_edges = pd.read_excel(EXCEL_PATH, sheet_name=EDGES_SHEET)
-
-# Normalize column names
 df_edges.columns = [c.strip().lower() for c in df_edges.columns]
 
-# Clean relevant fields
 df_edges["source stage.col"] = df_edges["source stage.col"].astype(str).str.strip()
-df_edges["target stage.col"] = df_edges["target stage.col"].astype(str).str.strip()
+
+excel_source_cols = set(df_edges["source stage.col"])
+
+df_excel = pd.DataFrame({"source_stage_col": list(excel_source_cols)})
+
+print(f"✅ Total Excel source columns: {len(df_excel)}")
 
 # -------------------------------
-# STEP 3: NORMALIZE KEYS
+# STEP 3: COMPARISON
 # -------------------------------
-# Extract column name from stage.col
-def extract_col(x):
-    if "." in x:
-        return x.split(".")[-1]
-    return x
+xml_set = set(df_xml["source_stage_col"])
+excel_set = set(df_excel["source_stage_col"])
 
-df_edges["column_name"] = df_edges["target stage.col"].apply(extract_col)
-df_edges["source_column_clean"] = df_edges["source stage.col"]
+matched = xml_set & excel_set
+missing_in_excel = xml_set - excel_set
+missing_in_xml = excel_set - xml_set
 
 # -------------------------------
-# STEP 4: RECONCILIATION
+# STEP 4: BUILD OUTPUT
 # -------------------------------
 final_rows = []
 
-for _, row in df_edges.iterrows():
-    col = row["column_name"]
-    src = row["source_column_clean"]
-    job = row.get("job_file", "unknown")
-
-    # Try match in XML
-    match = df_xml[
-        (df_xml["column_name"] == col)
-    ]
-
-    if not match.empty:
-        target_table = match.iloc[0]["target_table"]
-
-        comment = "MATCHED"
-        if row.get("confidence", "") != "high":
-            comment += " | Low confidence in Excel"
-
-    else:
-        target_table = None
-        comment = "MISSING IN XML"
-
-    # Extra validation
-    if pd.notna(row.get("resolution")):
-        comment += f" | Resolution: {row['resolution']}"
-
+# MATCHED
+for col in matched:
     final_rows.append({
-        "source_file": job,
+        "source_file": XML_PATH.split("/")[-1],
         "column_name": col,
-        "target_table": target_table,
-        "comments": comment
+        "target_table": "NA",
+        "comments": "MATCHED in Excel"
+    })
+
+# XML but NOT in Excel
+for col in missing_in_excel:
+    final_rows.append({
+        "source_file": XML_PATH.split("/")[-1],
+        "column_name": col,
+        "target_table": "NA",
+        "comments": "❌ Missing in Excel"
+    })
+
+# Excel but NOT in XML
+for col in missing_in_xml:
+    final_rows.append({
+        "source_file": XML_PATH.split("/")[-1],
+        "column_name": col,
+        "target_table": "NA",
+        "comments": "⚠️ Missing in XML"
     })
 
 df_final = pd.DataFrame(final_rows)
 
 # -------------------------------
-# STEP 5: AGGREGATION (dedupe)
-# -------------------------------
-df_final = df_final.groupby(
-    ["source_file", "column_name", "target_table"],
-    as_index=False
-).agg({
-    "comments": lambda x: " | ".join(set(x))
-})
-
-# -------------------------------
-# STEP 6: OUTPUT
+# STEP 5: SAVE OUTPUT
 # -------------------------------
 df_final.to_excel(OUTPUT_PATH, index=False)
 
-print("✅ Final Recon Output Generated:", OUTPUT_PATH)
+print("\n📊 SUMMARY")
+print("Matched:", len(matched))
+print("Missing in Excel:", len(missing_in_excel))
+print("Missing in XML:", len(missing_in_xml))
+
+print("\n✅ Output saved:", OUTPUT_PATH)
